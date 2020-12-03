@@ -37,7 +37,7 @@ volatile sig_atomic_t flag_fin;
 socklen_t addr_len;
 struct sockaddr_in clientaddr;
 struct sockaddr_in serveraddr;
-char buffer_rx[128];
+char buffer_tx[128],buffer_rx[128];
 int newfd;
 int n;
 int fd_s;
@@ -100,9 +100,23 @@ void* start_tcp(void* message)
 	 		perror("Error en accept");
 	   		exit(1);
 		}
+
+		
+		if( (n = read(newfd,buffer_tx,128)) == -1 ){
+			perror("Error leyendo mensaje en socket");
+			exit(1);
+		}
+		buffer_tx[n]=0x00;
+
+		while(n!=-1){
+			printf("Se recibió del socket %d bytes: %s\n",n,buffer_tx);
+			n = read(newfd,buffer_tx,128);
+			if(n==SIZE_MSG_RCV){
+				serial_send(buffer_tx,n);
+			}
+		}
+		close(newfd);
 	}
-	usleep(ESPERA);
-	return NULL;
 }
 
 //=================================== Programa Principal ==========================================
@@ -111,6 +125,7 @@ int main(void)
 	char data_send[]=MSG_SERIAL_SND;
 	char data_rcvd[]=MSG_SERIAL_RCV;
 	flag_fin=0;
+	int n_rcvd;
 
 	printf("Inicio Serial Service\r\n");
 
@@ -174,11 +189,9 @@ int main(void)
 	pthread_detach(h_thread);
 	desbloquearSign();
 
-
-
 	while(1){
-		if(serial_receive(data_rcvd,SIZE_MSG_RCV)!=0){
-			printf("Se recibió del puerto serie: %s",data_rcvd);
+		if((n_rcvd=serial_receive(data_rcvd,SIZE_MSG_RCV))!=0){
+			printf("Se recibió del puerto serie %d bytes: %s",n_rcvd,data_rcvd);
 			// Enviamos mensaje a cliente
     		if (write (newfd, data_rcvd, SIZE_MSG_RCV) == -1){
       			perror("Error escribiendo mensaje en socket");
@@ -190,6 +203,7 @@ int main(void)
 			printf("\n Termino el programa \n");
 			// Cerramos conexion con cliente
     		close(newfd);
+    		close(fd_s);			
 			//pthread_join (h_thread, &ret);
 			serial_close();
 			return 0;
