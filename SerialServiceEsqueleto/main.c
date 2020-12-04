@@ -38,6 +38,7 @@ socklen_t addr_len;
 struct sockaddr_in clientaddr;
 struct sockaddr_in serveraddr;
 char buffer_tx[128],buffer_rx[128];
+char data_send[]=MSG_SERIAL_SND;
 int newfd;
 int n;
 int fd_s;
@@ -73,21 +74,6 @@ void desbloquearSign(void)
 
 
 //=================================== Manejo de hilos ============================================
-void* read_tcp(void* message)
-{
-	// Leemos mensaje de cliente
-	//if( (n = recv(newfd,buffer,128,0)) == -1 )
-	if( (n = read(newfd,buffer_rx,128)) == -1 ){
-			perror("Error leyendo mensaje en socket");
-			exit(1);
-		}
-	buffer_rx[n]=0x00;
-	serial_send(buffer_rx,n);
-	printf("Recibi %d bytes.:%s\n",n,buffer_rx);
-	sleep(ESPERA);
-	return NULL;
-}
-
 void* start_tcp(void* message)
 {
 	//printf ("%s\n", (const char *) message);
@@ -95,26 +81,37 @@ void* start_tcp(void* message)
 	while(1){
 		// Ejecutamos accept() para recibir conexiones entrantes,el newfd es activo
 		// Ojo: la función accept es bloqueante
+		printf("Esperando un cliente\n");
 		addr_len = sizeof(struct sockaddr_in);
     	if ( (newfd = accept(fd_s, (struct sockaddr *)&clientaddr, &addr_len)) == -1){
 	 		perror("Error en accept");
 	   		exit(1);
 		}
 
-		
+		char ipClient[32];
+		inet_ntop(AF_INET, &(clientaddr.sin_addr), ipClient, sizeof(ipClient));
+		printf  ("Server, conexión desde:  %s\n",ipClient);
+
 		if( (n = read(newfd,buffer_tx,128)) == -1 ){
 			perror("Error leyendo mensaje en socket");
 			exit(1);
 		}
 		buffer_tx[n]=0x00;
-
-		while(n!=-1){
+		if(n==SIZE_MSG_RCV){
+			serial_send(buffer_tx,n);
 			printf("Se recibió del socket %d bytes: %s\n",n,buffer_tx);
+		}
+
+		while(n!=-1 && n!=0){
 			n = read(newfd,buffer_tx,128);
+			//printf("Recividos del socket %d bytes: %s\n",n,buffer_tx);
 			if(n==SIZE_MSG_RCV){
-				serial_send(buffer_tx,n);
+				strcpy(data_send,buffer_tx);
+				serial_send(data_send,n);
+				printf("Se recibió del socket %d bytes: %s\n",n,buffer_tx);
 			}
 		}
+		printf("Hubo un problema en al conexión\n");
 		close(newfd);
 	}
 }
@@ -122,7 +119,6 @@ void* start_tcp(void* message)
 //=================================== Programa Principal ==========================================
 int main(void)
 {
-	char data_send[]=MSG_SERIAL_SND;
 	char data_rcvd[]=MSG_SERIAL_RCV;
 	flag_fin=0;
 	int n_rcvd;
@@ -192,8 +188,9 @@ int main(void)
 	while(1){
 		if((n_rcvd=serial_receive(data_rcvd,SIZE_MSG_RCV))!=0){
 			printf("Se recibió del puerto serie %d bytes: %s",n_rcvd,data_rcvd);
+			strcpy(buffer_rx,data_rcvd);
 			// Enviamos mensaje a cliente
-    		if (write (newfd, data_rcvd, SIZE_MSG_RCV) == -1){
+    		if (write (newfd, buffer_rx, SIZE_MSG_RCV) == -1){
       			perror("Error escribiendo mensaje en socket");
       			exit (1);
     		}
