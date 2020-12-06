@@ -29,9 +29,11 @@
 #define SIZE_MSG_RCV strlen(MSG_SERIAL_SND)
 
 //=================================== Variablos globales ==========================================
-static 	pthread_t h_thread,h_thread1;
+static 	pthread_t h_thread;
 void* ret;
 volatile sig_atomic_t flag_fin;
+
+pthread_mutex_t mutexData = PTHREAD_MUTEX_INITIALIZER;
 
 // Variables que se usan para la conexión tcp
 socklen_t addr_len;
@@ -46,10 +48,15 @@ int fd_s;
 //=================================== Manejo de señales ===========================================
 void signal_receive(int signal)
 {
-	write(1,"Capturo las señales...\n",23);
-
-	// Termino el programa de forma controlada
-	flag_fin=1;
+	write(1,"\nCapturo las señales...\n",23);
+	switch(signal){
+		case SIGINT:
+		case SIGTERM:
+			// Termino el programa de forma controlada
+			flag_fin=1;
+			break;
+		//case SIGPIPE:	
+	}
 }
 
 void bloquearSign(void)
@@ -85,34 +92,30 @@ void* start_tcp(void* message)
 		addr_len = sizeof(struct sockaddr_in);
     	if ( (newfd = accept(fd_s, (struct sockaddr *)&clientaddr, &addr_len)) == -1){
 	 		perror("Error en accept");
-	   		exit(1);
+	   		usleep(ESPERA);				// Es para que me de tiempo a escribir en pantalla
+			flag_fin=1;
 		}
 
 		char ipClient[32];
 		inet_ntop(AF_INET, &(clientaddr.sin_addr), ipClient, sizeof(ipClient));
 		printf  ("Server, conexión desde:  %s\n",ipClient);
 
-		if( (n = read(newfd,buffer_tx,128)) == -1 ){
-			perror("Error leyendo mensaje en socket");
-			exit(1);
-		}
-		buffer_tx[n]=0x00;
-		if(n==SIZE_MSG_RCV){
-			serial_send(buffer_tx,n);
-			printf("Se recibió del socket %d bytes: %s\n",n,buffer_tx);
-		}
-
-		while(n!=-1 && n!=0){
+		do{
 			n = read(newfd,buffer_tx,128);
 			//printf("Recividos del socket %d bytes: %s\n",n,buffer_tx);
 			if(n==SIZE_MSG_RCV){
 				strcpy(data_send,buffer_tx);
 				serial_send(data_send,n);
-				printf("Se recibió del socket %d bytes: %s\n",n,buffer_tx);
+				printf("Se recibió del socket %d bytes: %s\n",n,data_send);
 			}
-		}
+
+		} while ( n!=0 && n!=-1);
+
 		printf("Hubo un problema en al conexión\n");
+		pthread_mutex_lock (&mutexData);
 		close(newfd);
+		newfd=0;
+		pthread_mutex_unlock (&mutexData);
 	}
 }
 
@@ -122,6 +125,8 @@ int main(void)
 	char data_rcvd[]=MSG_SERIAL_RCV;
 	flag_fin=0;
 	int n_rcvd;
+
+	newfd=0;
 
 	printf("Inicio Serial Service\r\n");
 
@@ -137,8 +142,12 @@ int main(void)
     if(sigaction(SIGTERM,&sa,NULL)==-1){
 		perror("Error de sigaction: SIGTERM");
         	exit(1);
-        }
-	
+        }  
+    if(sigaction(SIGPIPE,&sa,NULL)==-1){
+		perror("Error de sigaction: SIGTERM");
+        	exit(1);
+        } 
+
 	// Abro el canal serie hacia la EDU-CIAA
 	if(serial_open(SERIAL_PORT,BAUDRATE) != 0){
 		printf("No se pudo abrir el puerto serie\n");
@@ -190,14 +199,23 @@ int main(void)
 			printf("Se recibió del puerto serie %d bytes: %s",n_rcvd,data_rcvd);
 			strcpy(buffer_rx,data_rcvd);
 			// Enviamos mensaje a cliente
-    		if (write (newfd, buffer_rx, SIZE_MSG_RCV) == -1){
-      			perror("Error escribiendo mensaje en socket");
-      			exit (1);
-    		}
-		}
+   			pthread_mutex_lock (&mutexData);
+			if(newfd > 0 ){
+				if (write (newfd, buffer_rx, SIZE_MSG_RCV) == -1 ){
+      				perror("Error escribiendo mensaje en socket");
+      				exit (1);
+    			}
+			}
+			else {
+				printf("No se puede Tx al socket ya que no está conectado\n");
+			}
+			pthread_mutex_unlock (&mutexData);
+		} 
 		usleep(ESPERA);
 		if(flag_fin==1){
-			printf("\n Termino el programa \n");
+			printf("\nTermino el programa \n");
+			// Cerramos el thread
+			pthread_cancel(h_thread);
 			// Cerramos conexion con cliente
     		close(newfd);
     		close(fd_s);			
